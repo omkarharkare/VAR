@@ -1,7 +1,6 @@
 import os
 import json
-import cv2
-import numpy as np
+from collections import Counter
 
 def prepare_data(root_dir, split):
     data = []
@@ -44,24 +43,24 @@ def prepare_data(root_dir, split):
     print()
     return data, labels
 
-# Usage
-root_dir = 'SoccerNet/mvFouls'  # Update this to your actual root directory
-train_data, train_labels = prepare_data(root_dir, 'train')
-val_data, val_labels = prepare_data(root_dir, 'valid')
-test_data, test_labels = prepare_data(root_dir, 'test')
+if __name__ == "__main__":
+    # Usage
+    root_dir = 'SoccerNet/mvFouls'  # Update this to your actual root directory
+    train_data, train_labels = prepare_data(root_dir, 'train')
+    val_data, val_labels = prepare_data(root_dir, 'valid')
+    test_data, test_labels = prepare_data(root_dir, 'test')
 
-print(f"Train samples: {len(train_data)}")
-print(f"Validation samples: {len(val_data)}")
-print(f"Test samples: {len(test_data)}")
+    print(f"Train samples: {len(train_data)}")
+    print(f"Validation samples: {len(val_data)}")
+    print(f"Test samples: {len(test_data)}")
 
-# Print class distribution
-from collections import Counter
-print("\nClass distribution:")
-print(f"Train: {Counter(train_labels)}")
-print(f"Validation: {Counter(val_labels)}")
-print(f"Test: {Counter(test_labels)}")
+    # Print class distribution
+    print("\nClass distribution:")
+    print(f"Train: {Counter(train_labels)}")
+    print(f"Validation: {Counter(val_labels)}")
+    print(f"Test: {Counter(test_labels)}")
 
-# Print a few sample paths to verify
-print("\nSample file paths:")
-for i in range(min(5, len(train_data))):
-    print(train_data[i])
+    # Print a few sample paths to verify
+    print("\nSample file paths:")
+    for i in range(min(5, len(train_data))):
+        print(train_data[i])

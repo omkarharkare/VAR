@@ -1,25 +1,22 @@
 import cv2
 import numpy as np
-from tensorflow.keras.utils import Sequence
+import torch
+from torch.utils.data import Dataset
 
-class VideoDataGenerator(Sequence):
-    def __init__(self, video_paths, labels, batch_size=32, num_frames=16, target_size=(224, 224), **kwargs):
-        super().__init__(**kwargs)  # Call superclass initializer
+class VideoDataset(Dataset):
+    def __init__(self, video_paths, labels, num_frames=16, target_size=(224, 224)):
         self.video_paths = video_paths
         self.labels = labels
-        self.batch_size = batch_size
         self.num_frames = num_frames
         self.target_size = target_size
 
     def __len__(self):
-        return len(self.video_paths) // self.batch_size
+        return len(self.video_paths)
 
     def __getitem__(self, idx):
-        batch_x = self.video_paths[idx * self.batch_size:(idx + 1) * self.batch_size]
-        batch_y = self.labels[idx * self.batch_size:(idx + 1) * self.batch_size]
-
-        processed_videos = [self.load_video(path) for path in batch_x]
-        return np.array(processed_videos), np.array(batch_y)
+        video = self.load_video(self.video_paths[idx])
+        label = self.labels[idx]
+        return torch.from_numpy(video).permute(3, 0, 1, 2).float(), torch.tensor(label).float()
 
     def load_video(self, video_path):
         try: 
