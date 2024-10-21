@@ -16,16 +16,19 @@ class VideoDataset(Dataset):
     def __getitem__(self, idx):
         video = self.load_video(self.video_paths[idx])
         label = self.labels[idx]
-        return torch.from_numpy(video).permute(3, 0, 1, 2).float(), torch.tensor(label).float()
+        
+        # Process each frame individually
+        frames_tensor = [torch.from_numpy(frame).permute(2, 0, 1).float() for frame in video]
+        
+        return torch.stack(frames_tensor), torch.tensor(label).float()
 
     def load_video(self, video_path):
-        try: 
+        try:
             frames = []
             cap = cv2.VideoCapture(video_path)
-            
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             frame_interval = max(1, total_frames // self.num_frames)
-            
+
             for i in range(self.num_frames):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, i * frame_interval)
                 ret, frame = cap.read()
@@ -36,16 +39,16 @@ class VideoDataset(Dataset):
                     frames.append(frame)
                 else:
                     frames.append(np.zeros((*self.target_size, 3), dtype=np.float32))
-            
+
             cap.release()
-            
+
             if len(frames) < self.num_frames:
                 frames += [np.zeros((*self.target_size, 3), dtype=np.float32)] * (self.num_frames - len(frames))
             elif len(frames) > self.num_frames:
                 frames = frames[:self.num_frames]
-            
+
             return np.array(frames)
-        
+
         except Exception as e:
             print(f"Error loading video {video_path}: {str(e)}")
             return np.zeros((self.num_frames, *self.target_size, 3), dtype=np.float32)
