@@ -2,7 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.metrics import accuracy_score
 from data_loader import VideoDataset
-from model import OffsideDetectionModel  # Ensure this matches your actual model import
+from model import VideoClassifier  # Ensure this matches your actual model import
 from preprocess import prepare_data
 import time
 
@@ -13,12 +13,12 @@ def log_with_timestamp(message):
 # Load the trained model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 log_with_timestamp(f"Using device: {device}")
-model = OffsideDetectionModel().to(device)
-model.load_state_dict(torch.load('final_model.pth'))  # Load your saved model weights
+model = VideoClassifier().to(device)
+model.load_state_dict(torch.load('best_model.pth'))  # Load your saved model weights
 model.eval()  # Set the model to evaluation mode
 
 # Prepare test data (or validation data)
-root_dir = 'D:/soccernet/mvfouls'
+root_dir = 'SoccerNet/mvfouls'
 test_data, test_labels = prepare_data(root_dir, 'test')
 test_dataset = VideoDataset(test_data, test_labels)
 test_loader = DataLoader(test_dataset, batch_size=48)  # Use appropriate batch size

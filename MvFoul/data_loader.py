@@ -1,54 +1,100 @@
 import cv2
-import numpy as np
 import torch
-from torch.utils.data import Dataset
+import numpy as np
+from torch.utils.data import Dataset, DataLoader
+from typing import List, Tuple, Optional
+import logging
+import os 
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class VideoDataset(Dataset):
-    def __init__(self, video_paths, labels, num_frames=16, target_size=(224, 224)):
+    """Dataset for loading and preprocessing video data."""
+    
+    def __init__(
+        self, 
+        video_paths: List[str],
+        labels: List[int],
+        num_frames: int = 16,
+        target_size: Tuple[int, int] = (224, 224),
+        augment: bool = False
+    ):
+        """
+        Initialize the video dataset.
+        
+        Args:
+            video_paths: List of paths to video files
+            labels: List of corresponding labels
+            num_frames: Number of frames to sample from each video
+            target_size: Target size for frame resizing
+            augment: Whether to apply data augmentation
+        """
         self.video_paths = video_paths
         self.labels = labels
         self.num_frames = num_frames
         self.target_size = target_size
-
-    def __len__(self):
+        self.augment = augment
+        
+    def __len__(self) -> int:
         return len(self.video_paths)
+    
+    def augment_frame(self, frame: torch.Tensor) -> torch.Tensor:
+        """Apply random augmentations to a frame."""
+        if torch.rand(1) > 0.5:
+            frame = torch.flip(frame, [2])  # horizontal flip
+            
+        if torch.rand(1) > 0.5:
+            # Random brightness adjustment
+            brightness = 0.4 * torch.rand(1) + 0.8
+            frame = torch.clamp(frame * brightness, 0, 1)
+            
+        return frame
 
-    def __getitem__(self, idx):
-        video = self.load_video(self.video_paths[idx])
-        label = self.labels[idx]
-        
-        # Process each frame individually
-        frames_tensor = [torch.from_numpy(frame).permute(2, 0, 1).float() for frame in video]
-        
-        return torch.stack(frames_tensor), torch.tensor(label).float()
-
-    def load_video(self, video_path):
+    def load_video(self, video_path: str) -> torch.Tensor:
+        """
+        Load and preprocess a video file.
+        """
         try:
             frames = []
             cap = cv2.VideoCapture(video_path)
+            
+            if not cap.isOpened():
+                raise ValueError(f"Failed to open video: {video_path}")
+            
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            frame_interval = max(1, total_frames // self.num_frames)
-
-            for i in range(self.num_frames):
-                cap.set(cv2.CAP_PROP_POS_FRAMES, i * frame_interval)
+            if total_frames < 1:
+                raise ValueError(f"Video has no frames: {video_path}")
+                
+            frame_indices = np.linspace(0, total_frames-1, self.num_frames, dtype=int)
+            
+            for frame_idx in frame_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
                 ret, frame = cap.read()
                 if ret:
                     frame = cv2.resize(frame, self.target_size)
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = frame.astype(np.float32) / 255.0
+                    frame = torch.from_numpy(frame).float() / 255.0
+                    frame = frame.permute(2, 0, 1)  # Convert to CxHxW format
+                    
+                    if self.augment:
+                        frame = self.augment_frame(frame)
+                        
                     frames.append(frame)
                 else:
-                    frames.append(np.zeros((*self.target_size, 3), dtype=np.float32))
-
+                    logger.warning(f"Failed to read frame {frame_idx} from {video_path}")
+                    frames.append(torch.zeros(3, *self.target_size))
+            
             cap.release()
-
-            if len(frames) < self.num_frames:
-                frames += [np.zeros((*self.target_size, 3), dtype=np.float32)] * (self.num_frames - len(frames))
-            elif len(frames) > self.num_frames:
-                frames = frames[:self.num_frames]
-
-            return np.array(frames)
-
+            return torch.stack(frames)
+            
         except Exception as e:
-            print(f"Error loading video {video_path}: {str(e)}")
-            return np.zeros((self.num_frames, *self.target_size, 3), dtype=np.float32)
+            logger.error(f"Error loading video {video_path}: {str(e)}")
+            return torch.zeros(self.num_frames, 3, *self.target_size)
+            
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Get a single item from the dataset."""
+        video = self.load_video(self.video_paths[idx])
+        label = torch.tensor(self.labels[idx], dtype=torch.float32)
+        return video, label

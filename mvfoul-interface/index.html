@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Classification</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css"></script>
+    <style>
+        .drag-active {
+            border-color: #4F46E5;
+            background-color: #EEF2FF;
+        }
+        
+        .progress-bar {
+            transition: width 0.3s ease-in-out;
+        }
+        
+        .file-input-label:hover {
+            background-color: #F3F4F6;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <div class="max-w-2xl mx-auto bg-white rounded-lg shadow-md overflow-hidden">
+            <div class="p-6">
+                <h1 class="text-2xl font-bold text-gray-900 mb-6">Video Classification</h1>
+                
+                <!-- Upload Section -->
+                <div class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-6">
+                    <input type="file" id="video-upload" class="hidden" accept="video/mp4,video/avi,video/quicktime">
+                    <label for="video-upload" class="cursor-pointer block">
+                        <svg class="mx-auto h-12 w-12 text-gray-400" stroke="currentColor" fill="none" viewBox="0 0 48 48">
+                            <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                        <p class="mt-2 text-sm text-gray-600">Click to upload or drag and drop a video file</p>
+                        <p class="mt-1 text-xs text-gray-500">MP4, AVI, or MOV up to 50MB</p>
+                    </label>
+                </div>
+                
+                <!-- Preview Section -->
+                <div id="preview-section" class="hidden mb-6">
+                    <video id="video-preview" controls class="w-full rounded-lg" style="max-height: 300px"></video>
+                </div>
+                
+                <!-- Progress Section -->
+                <div id="progress-section" class="hidden mb-6">
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full progress-bar" style="width: 0%"></div>
+                    </div>
+                    <p id="progress-text" class="text-sm text-gray-600 text-center mt-2">Processing video... 0%</p>
+                </div>
+                
+                <!-- Error Message -->
+                <div id="error-message" class="hidden mb-6 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative">
+                    <span id="error-text"></span>
+                </div>
+                
+                <!-- Results Section -->
+                <div id="results-section" class="hidden mb-6 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
+                    <h3 class="font-semibold">Classification Result:</h3>
+                    <p id="prediction-text"></p>
+                    <p id="confidence-text"></p>
+                </div>
+                
+                <!-- Submit Button -->
+                <button id="submit-button" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                    Classify Video
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        
+        // Check backend health on load
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch(`${API_URL}/health`);
+                const data = await response.json();
+                if (!data.model_loaded) {
+                    showError('Backend model not loaded. Please try again later.');
+                }
+            } catch (error) {
+                showError('Cannot connect to backend server. Please ensure it is running.');
+            }
+        });
+
+        const fileInput = document.getElementById('video-upload');
+        const previewSection = document.getElementById('preview-section');
+        const videoPreview = document.getElementById('video-preview');
+        const progressSection = document.getElementById('progress-section');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const errorMessage = document.getElementById('error-message');
+        const errorText = document.getElementById('error-text');
+        const resultsSection = document.getElementById('results-section');
+        const predictionText = document.getElementById('prediction-text');
+        const confidenceText = document.getElementById('confidence-text');
+        const submitButton = document.getElementById('submit-button');
+
+        let selectedFile = null;
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            handleFileSelection(file);
+        });
+
+        const dropZone = document.querySelector('.border-dashed');
+        
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-active');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-active');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-active');
+            const file = e.dataTransfer.files[0];
+            handleFileSelection(file);
+        });
+
+        function handleFileSelection(file) {
+            if (!file) return;
+            
+            const validTypes = ['video/mp4', 'video/avi', 'video/quicktime'];
+            if (!validTypes.includes(file.type)) {
+                showError('Please upload a valid video file (MP4, AVI, or MOV)');
+                return;
+            }
+
+            if (file.size > 50 * 1024 * 1024) {
+                showError('File size exceeds 50MB limit');
+                return;
+            }
+
+            selectedFile = file;
+            videoPreview.src = URL.createObjectURL(file);
+            previewSection.classList.remove('hidden');
+            submitButton.disabled = false;
+            hideError();
+            hideResults();
+        }
+
+        submitButton.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            const formData = new FormData();
+            formData.append('video', selectedFile);
+
+            showProgress();
+            submitButton.disabled = true;
+            hideError();
+            hideResults();
+
+            try {
+                const response = await fetch(`${API_URL}/api/classify-video`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to process video');
+                }
+
+                if (data.status === 'success') {
+                    showResults(data);
+                } else {
+                    throw new Error('Invalid response from server');
+                }
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                hideProgress();
+                submitButton.disabled = false;
+            }
+        });
+
+        function showProgress() {
+            progressSection.classList.remove('hidden');
+            let progress = 0;
+            const interval = setInterval(() => {
+                if (progress >= 90) {
+                    clearInterval(interval);
+                    return;
+                }
+                progress += 10;
+                updateProgress(progress);
+            }, 500);
+        }
+
+        function updateProgress(value) {
+            progressBar.style.width = `${value}%`;
+            progressText.textContent = `Processing video... ${value}%`;
+        }
+
+        function hideProgress() {
+            progressSection.classList.add('hidden');
+            updateProgress(0);
+        }
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.classList.remove('hidden');
+        }
+
+        function hideError() {
+            errorMessage.classList.add('hidden');
+        }
+
+        function showResults(data) {
+            if (data.prediction && typeof data.confidence === 'number') {
+                predictionText.textContent = `Prediction: ${data.prediction}`;
+                confidenceText.textContent = `Confidence: ${(data.confidence * 100).toFixed(2)}%`;
+                resultsSection.classList.remove('hidden');
+            } else {
+                showError('Invalid response format from server');
+            }
+        }
+
+        function hideResults() {
+            resultsSection.classList.add('hidden');
+        }
+    </script>
+</body>
+</html>
