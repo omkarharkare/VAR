@@ -225,7 +225,7 @@ def train_model(
 if __name__ == "__main__":
     config = {
         "num_frames": 16,
-        "batch_size": 1,
+        "batch_size": 4,
         "epochs": 50,
         "learning_rate": 1e-4,
         "dropout_rate": 0.5,

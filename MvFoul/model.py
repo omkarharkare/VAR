@@ -7,7 +7,7 @@ class VideoClassifier(nn.Module):
     def __init__(
         self,
         num_frames: int = 16,
-        input_channels: int = 16,
+        input_channels: int = 3,
         dropout_rate: float = 0.5
     ):
         super().__init__()
