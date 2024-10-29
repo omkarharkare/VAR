@@ -1,129 +1,241 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 import torch
-from pathlib import Path
-import tempfile
-import shutil
-from model import VideoClassifier
+import torch.nn as nn
+import torchvision.transforms as transforms
 import cv2
 import numpy as np
+from pathlib import Path
+import shutil
+import tempfile
+import uvicorn
 import logging
 
-# Set up logging
+# Initialize FastAPI app
+app = FastAPI()
+
+# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI()
+# Define the model
+class VideoClassifier(nn.Module):
+    def __init__(self, num_frames: int = 16, input_channels: int = 3, dropout_rate: float = 0.5):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv3d(input_channels, 32, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=(1, 2, 2)),
+            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
+            nn.BatchNorm3d(64),
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=(1, 2, 2)),
+            nn.Conv3d(64, 128, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
+            nn.BatchNorm3d(128),
+            nn.ReLU(),
+            nn.MaxPool3d(kernel_size=(1, 2, 2)),
+            nn.Conv3d(128, 256, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
+            nn.BatchNorm3d(256),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool3d((num_frames, 1, 1))
+        )
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(256 * num_frames, 512),
+            nn.ReLU(),
+            nn.Dropout(dropout_rate),
+            nn.Linear(512, 1),
+            nn.Sigmoid()
+        )
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W] -> [B, C, F, H, W]
+        x = self.features(x)
+        return self.classifier(x)
 
-# Configure CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# Load and preprocess functions
+def preprocess_video(video_path: str, num_frames: int = 16, img_size: int = 224) -> torch.Tensor:
+    cap = cv2.VideoCapture(video_path)
+    frames = []
+    transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((img_size, img_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    frame_count = 0
+    while frame_count < num_frames and cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
+        frame = transform(frame)
+        frames.append(frame)
+        frame_count += 1
+    
+    cap.release()
+    
+    while len(frames) < num_frames:
+        frames.append(frames[-1])
 
-# Load the model
-try:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = VideoClassifier(num_frames=16, dropout_rate=0.5).to(device)
-    model.load_state_dict(torch.load("best_model.pth", map_location=device))
+    frames_tensor = torch.stack(frames, dim=0)
+    return frames_tensor.unsqueeze(0)
+
+def load_model(model_path: str, device: torch.device, num_frames: int = 16) -> VideoClassifier:
+    model = VideoClassifier(num_frames=num_frames)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
     model.eval()
-    logger.info(f"Model loaded successfully on {device}")
+    return model
+
+def predict(model: VideoClassifier, video_tensor: torch.Tensor, device: torch.device) -> float:
+    video_tensor = video_tensor.to(device)
+    with torch.no_grad():
+        output = model(video_tensor)
+    return output.item()
+
+# Load model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_path = "./best_model.pth"  # Adjust path as necessary
+num_frames = 16
+try:
+    model = load_model(model_path, device, num_frames=num_frames)
+    logger.info("Model loaded successfully.")
 except Exception as e:
-    logger.error(f"Failed to load model: {str(e)}")
+    logger.error(f"Failed to load model: {e}")
     model = None
 
-def preprocess_video(video_path, num_frames=16):
-    """Preprocess video file for model input."""
-    try:
-        cap = cv2.VideoCapture(str(video_path))
-        if not cap.isOpened():
-            raise ValueError("Failed to open video file")
-            
-        frames = []
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+@app.get("/", response_class=HTMLResponse)
+async def serve_homepage():
+    """Serve the HTML frontend directly from here."""
+    return """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Video Classifier</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; margin-top: 50px; }
+            .hidden { display: none; }
+            #uploadForm { margin: 20px auto; }
+            #result { margin-top: 20px; font-size: 1.2em; color: #333; }
+            #progress-bar { width: 0%; transition: width 0.4s ease; }
+        </style>
+    </head>
+    <body>
+        <h1>Upload a Video for Classification</h1>
         
-        if total_frames < num_frames:
-            raise ValueError(f"Video too short. Need at least {num_frames} frames")
+        <form id="uploadForm" enctype="multipart/form-data">
+            <input type="file" id="fileInput" name="file" accept="video/*" required>
+            <button type="submit">Upload and Predict</button>
+        </form>
         
-        indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
-        
-        for idx in indices:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
-            ret, frame = cap.read()
-            if not ret:
-                raise ValueError(f"Failed to read frame at index {idx}")
-                
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = cv2.resize(frame, (224, 224))
-            frame = frame / 255.0
-            frames.append(frame)
-        
-        cap.release()
-        
-        frames = torch.FloatTensor(np.array(frames))
-        frames = frames.permute(3, 0, 1, 2).unsqueeze(0)
-        
-        return frames
-        
-    except Exception as e:
-        logger.error(f"Error in preprocessing: {str(e)}")
-        raise
+        <!-- Preview Section -->
+        <div id="preview-section" class="hidden mb-6">
+            <video id="video-preview" controls class="w-full rounded-lg" style="max-height: 300px"></video>
+        </div>
 
-@app.post("/api/classify-video")
-async def classify_video(video: UploadFile = File(...)):
+        <!-- Progress Section -->
+        <div id="progress-section" class="hidden mb-6">
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full progress-bar" style="width: 0%"></div>
+            </div>
+            <p id="progress-text" class="text-sm text-gray-600 text-center mt-2">Processing video... 0%</p>
+        </div>
+        
+        <div id="result"></div>
+
+        <script>
+            document.getElementById("uploadForm").onsubmit = async (e) => {
+                e.preventDefault();
+                
+                const fileInput = document.getElementById("fileInput");
+                if (!fileInput.files.length) return;
+
+                const formData = new FormData();
+                formData.append("file", fileInput.files[0]);
+
+                // Preview video
+                const videoPreview = document.getElementById("video-preview");
+                videoPreview.src = URL.createObjectURL(fileInput.files[0]);
+                document.getElementById("preview-section").classList.remove("hidden");
+
+                // Show progress
+                document.getElementById("progress-section").classList.remove("hidden");
+                document.getElementById("progress-bar").style.width = "0%";
+                document.getElementById("progress-text").textContent = "Processing video... 0%";
+
+                try {
+                    const response = await fetch("/api/predict", {
+                        method: "POST",
+                        body: formData
+                    });
+
+                    let progress = 0;
+                    const interval = setInterval(() => {
+                        if (progress >= 100) clearInterval(interval);
+                        else progress += 10;
+                        document.getElementById("progress-bar").style.width = `${progress}%`;
+                        document.getElementById("progress-text").textContent = `Processing video... ${progress}%`;
+                    }, 300);
+
+                    const result = await response.json();
+                    
+                    if (result.status === "success") {
+                        document.getElementById("result").textContent =
+                            `Prediction: ${result.prediction}, Confidence: ${result.confidence}`;
+                    } else {
+                        document.getElementById("result").textContent = "Error processing video.";
+                    }
+
+                    clearInterval(interval);
+                    document.getElementById("progress-bar").style.width = "100%";
+                    document.getElementById("progress-text").textContent = "Processing complete.";
+
+                } catch (error) {
+                    document.getElementById("result").textContent = "Error communicating with server.";
+                    console.error("Error:", error);
+                }
+            };
+        </script>
+    </body>
+    </html>
+    """
+
+
+@app.post("/api/predict")
+async def classify_video(file: UploadFile = File(...)):
+    """API endpoint to classify an uploaded video."""
     if not model:
         raise HTTPException(status_code=500, detail="Model not loaded")
-        
-    if not video.filename.lower().endswith(('.mp4', '.avi', '.mov')):
-        raise HTTPException(status_code=400, detail="Invalid video format. Please upload MP4, AVI, or MOV file")
-    
-    try:
-        # Create temp directory if it doesn't exist
-        temp_dir = Path("temp")
-        temp_dir.mkdir(exist_ok=True)
-        
-        # Save uploaded file
-        temp_path = temp_dir / f"temp_{video.filename}"
-        with temp_path.open("wb") as buffer:
-            shutil.copyfileobj(video.file, buffer)
-        
-        try:
-            # Preprocess video
-            inputs = preprocess_video(temp_path)
-            inputs = inputs.to(device)
-            
-            # Get prediction
-            with torch.no_grad():
-                outputs = model(inputs)
-                probability = outputs.squeeze().item()
-                prediction = "Foul" if probability > 0.5 else "No Foul"
-            
-            return {
-                "status": "success",
-                "prediction": prediction,
-                "confidence": float(probability if prediction == "Foul" else 1 - probability)
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in processing: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
-            
-        finally:
-            # Clean up
-            if temp_path.exists():
-                temp_path.unlink()
-            
-    except Exception as e:
-        logger.error(f"Error in file handling: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error handling video: {str(e)}")
 
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "model_loaded": model is not None}
+    if not file.filename.endswith((".mp4", ".avi", ".mov")):
+        raise HTTPException(status_code=400, detail="Invalid video format. Use MP4, AVI, or MOV.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
+        shutil.copyfileobj(file.file, tmp_file)
+        video_path = tmp_file.name
+
+    try:
+        video_tensor = preprocess_video(video_path, num_frames=num_frames)
+        probability = predict(model, video_tensor, device)
+        prediction = "Foul" if 1 - probability > 0.5 else "No Foul"
+        confidence = round(probability if prediction == "No Foul" else 1 - probability, 4)
+
+        return {
+            "status": "success",
+            "prediction": prediction,
+            "confidence": confidence
+        }
+    except Exception as e:
+        logger.error(f"Error processing video: {e}")
+        raise HTTPException(status_code=500, detail="Error processing video.")
+    finally:
+        Path(video_path).unlink()
 
 if __name__ == "__main__":
-    import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

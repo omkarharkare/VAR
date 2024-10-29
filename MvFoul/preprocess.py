@@ -28,5 +28,5 @@ def prepare_data(root_dir, split):
     return data, labels
 
 if __name__ == "__main__":
-    root_dir = 'SoccerNet/mvfouls'
+    root_dir = 'mvfouls'
     train_data, train_labels = prepare_data(root_dir, 'train')

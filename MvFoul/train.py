@@ -81,7 +81,7 @@ def train_model(
         
         optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"])
         scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6
+            optimizer, mode='max', factor=0.5, patience=5, min_lr=1e-6
         )
         
         writer = SummaryWriter(exp_dir / "logs")
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         print(f"Using device: {device}")
         
         # Prepare data
-        root_dir = Path('SoccerNet/mvFouls')
+        root_dir = Path('mvFouls')
         train_data, train_labels = prepare_data(root_dir, 'train')
         val_data, val_labels = prepare_data(root_dir, 'valid')
         
@@ -254,7 +254,7 @@ if __name__ == "__main__":
             train_data, 
             train_labels,
             num_frames=config["num_frames"],
-            augment=True
+            augment=False
         )
         val_dataset = VideoDataset(
             val_data,
