@@ -1,115 +1,115 @@
-import torch
-import torch.nn as nn
-import torchvision.transforms as transforms
-import cv2
-import numpy as np
+# main.py
+from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.responses import HTMLResponse
 from pathlib import Path
-from typing import List
+from model import TwoStreamNetwork, load_model
+import torch
+import torch.nn.functional as F
+import tempfile
+import cv2
 
-class VideoClassifier(nn.Module):
-    """3D CNN for video classification."""
+app = FastAPI()
+
+# Load the model
+model = load_model("best_model_1.pth")
+
+# Load the EVENT_DICTIONARY for mapping annotation labels
+EVENT_DICTIONARY = {
+    'action_class': {
+        0: "Tackling", 1: "Standing tackling", 2: "High leg", 3: "Holding", 4: "Pushing",
+        5: "Elbowing", 6: "Challenge", 7: "Dive", 8: "Don't know"
+    },
+    'offence_class': {
+        0: "Yes", 1: "Between", 2: "No"
+    },
+    'severity_class': {
+        0: "1.0", 1: "2.0", 2: "3.0", 3: "4.0", 4: "5.0"
+    },
+    'bodypart_class': {
+        0: "Upper body", 1: "Under body"
+    },
+    'offence_severity_class': {
+        0: "No offence", 1: "Offence + No card", 2: "Offence + Yellow card", 3: "Offence + Red card"
+    }
+}
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    return Path("index.html").read_text()
+
+@app.post("/api/predict")
+async def predict(file: UploadFile = File(...)):
+    if not file.filename.endswith((".mp4", ".avi", ".mov")):
+        raise HTTPException(status_code=400, detail="Invalid video format. Use MP4, AVI, or MOV.")
     
-    def __init__(self, num_frames: int = 16, input_channels: int = 3, dropout_rate: float = 0.5):
-        super().__init__()
-        
-        self.features = nn.Sequential(
-            nn.Conv3d(input_channels, 32, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            nn.MaxPool3d(kernel_size=(1, 2, 2)),
-            
-            nn.Conv3d(32, 64, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-            nn.BatchNorm3d(64),
-            nn.ReLU(),
-            nn.MaxPool3d(kernel_size=(1, 2, 2)),
-            
-            nn.Conv3d(64, 128, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-            nn.BatchNorm3d(128),
-            nn.ReLU(),
-            nn.MaxPool3d(kernel_size=(1, 2, 2)),
-            
-            nn.Conv3d(128, 256, kernel_size=(3, 3, 3), padding=(1, 1, 1)),
-            nn.BatchNorm3d(256),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool3d((num_frames, 1, 1))
-        )
-        
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(256 * num_frames, 512),
-            nn.ReLU(),
-            nn.Dropout(dropout_rate),
-            nn.Linear(512, 1),
-            nn.Sigmoid()
-        )
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.permute(0, 2, 1, 3, 4)  # [B, F, C, H, W] -> [B, C, F, H, W]
-        x = self.features(x)
-        return self.classifier(x)
+    with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+        tmp_file.write(file.file.read())
+        video_path = tmp_file.name
 
-def preprocess_video(video_path: str, num_frames: int = 16, img_size: int = 224) -> torch.Tensor:
-    """Load a video, resize frames, and return a tensor with the shape [1, num_frames, 3, img_size, img_size]."""
+    # Preprocess the video
+    rgb_input, flow_input = preprocess_video(video_path)
+
+    # Perform prediction and calculate confidence
+    with torch.no_grad():
+        action_out, offence_out, severity_out, bodypart_out, offence_severity_out = model(rgb_input, flow_input)
+        
+        # Calculate confidence for each output by applying softmax
+        action_probs = F.softmax(action_out, dim=1)
+        offence_probs = F.softmax(offence_out, dim=1)
+        severity_probs = F.softmax(severity_out, dim=1)
+        bodypart_probs = F.softmax(bodypart_out, dim=1)
+        offence_severity_probs = F.softmax(offence_severity_out, dim=1)
+
+        # Get the predicted classes and map to labels
+        action_index = torch.argmax(action_probs, dim=1).item()
+        offence_index = torch.argmax(offence_probs, dim=1).item()
+        severity_index = torch.argmax(severity_probs, dim=1).item()
+        bodypart_index = torch.argmax(bodypart_probs, dim=1).item()
+        offence_severity_index = torch.argmax(offence_severity_probs, dim=1).item()
+
+        # Map indices to labels using EVENT_DICTIONARY
+        action_label = EVENT_DICTIONARY['action_class'][action_index]
+        offence_label = EVENT_DICTIONARY['offence_class'][offence_index]
+        severity_label = EVENT_DICTIONARY['severity_class'][severity_index]
+        bodypart_label = EVENT_DICTIONARY['bodypart_class'][bodypart_index]
+        offence_severity_label = EVENT_DICTIONARY['offence_severity_class'][offence_severity_index]
+
+        # Get confidence scores
+        action_confidence = action_probs[0, action_index].item()
+        offence_confidence = offence_probs[0, offence_index].item()
+        severity_confidence = severity_probs[0, severity_index].item()
+        bodypart_confidence = bodypart_probs[0, bodypart_index].item()
+        offence_severity_confidence = offence_severity_probs[0, offence_severity_index].item()
+
+    # Clean up the temporary video file
+    Path(video_path).unlink()
+    
+    # Return the labels and confidence scores in response
+    return {
+        "action": {"label": action_label, "confidence": action_confidence},
+        "offence": {"label": offence_label, "confidence": offence_confidence},
+        "severity": {"label": severity_label, "confidence": severity_confidence},
+        "bodypart": {"label": bodypart_label, "confidence": bodypart_confidence},
+        "offence_severity": {"label": offence_severity_label, "confidence": offence_severity_confidence}
+    }
+
+def preprocess_video(video_path, num_frames=16, img_size=112):
     cap = cv2.VideoCapture(video_path)
-    frames = []
-    transform = transforms.Compose([
-        transforms.ToPILImage(),
-        transforms.Resize((img_size, img_size)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-    
-    # Read and process frames
-    frame_count = 0
-    while frame_count < num_frames and cap.isOpened():
+    rgb_frames, flow_frames = [], []
+
+    while len(rgb_frames) < num_frames and cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)  # Convert BGR to RGB
-        frame = transform(frame)
-        frames.append(frame)
-        frame_count += 1
-    
+        resized_frame = cv2.resize(frame, (img_size, img_size))
+        rgb_frames.append(resized_frame)
+        flow_frames.append(cv2.cvtColor(resized_frame, cv2.COLOR_BGR2GRAY))
+
     cap.release()
-    
-    # If we have fewer frames, duplicate the last frame
-    while len(frames) < num_frames:
-        frames.append(frames[-1])
-
-    frames_tensor = torch.stack(frames, dim=0)  # Shape: [num_frames, 3, img_size, img_size]
-    return frames_tensor.unsqueeze(0)  # Shape: [1, num_frames, 3, img_size, img_size]
-
-def load_model(model_path: str, device: torch.device, num_frames: int = 16) -> VideoClassifier:
-    """Load a pretrained model from a .pth file."""
-    model = VideoClassifier(num_frames=num_frames)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
-    model.eval()
-    return model
-
-def predict(model: VideoClassifier, video_tensor: torch.Tensor, device: torch.device) -> float:
-    """Perform inference and return the probability of the positive class."""
-    video_tensor = video_tensor.to(device)
-    with torch.no_grad():
-        output = model(video_tensor)
-    return output.item()  # Return the probability of the positive class
+    rgb_tensor = torch.stack([torch.tensor(cv2.cvtColor(f, cv2.COLOR_BGR2RGB).transpose(2, 0, 1)) / 255.0 for f in rgb_frames]).unsqueeze(0)
+    flow_tensor = torch.stack([torch.tensor(f).unsqueeze(0) / 255.0 for f in flow_frames]).unsqueeze(0)
+    return rgb_tensor, flow_tensor
 
 if __name__ == "__main__":
-    # Paths and parameters
-    video_path = "./clip_3.mp4"  # Replace with the path to your video file
-    model_path = "./best_model.pth"       # Replace with the path to your model .pth file
-    num_frames = 16
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    # Preprocess video
-    video_tensor = preprocess_video(video_path, num_frames=num_frames)
-    print(f"Processed video tensor shape: {video_tensor.shape}")
-    
-    # Load model
-    model = load_model(model_path, device, num_frames=num_frames)
-    print("Model loaded successfully.")
-    
-    # Make a prediction
-    probability = predict(model, video_tensor, device)
-    print(f"Predicted probability of positive class or non-foul: {probability:.4f}")
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

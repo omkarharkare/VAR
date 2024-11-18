@@ -1,287 +1,187 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, WeightedRandomSampler
-from torch.utils.tensorboard import SummaryWriter
-from pathlib import Path
-import json
-from datetime import datetime
-from typing import Dict, Any, Tuple
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
+from sklearn.metrics import accuracy_score
+from torchvision import transforms
 import numpy as np
-from sklearn.metrics import precision_recall_fscore_support, average_precision_score
-from model import VideoClassifier
-from data_loader import VideoDataset
-from preprocess import prepare_data
+from model import ImprovedTwoStreamNetwork
+from preprocess import load_filtered_clips_and_labels
 
-def calculate_class_weights(labels: torch.Tensor) -> torch.Tensor:
-    """Calculate class weights inversely proportional to class frequencies."""
-    class_counts = torch.bincount(labels.long())
-    total_samples = len(labels)
-    class_weights = total_samples / (len(class_counts) * class_counts.float())
-    return class_weights
+# Import your model
+#from model import TwoStreamNetwork  # Assuming the model code is saved as model.py
 
-def get_weighted_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
-    """Create a weighted sampler to balance class distribution."""
-    class_counts = torch.bincount(labels.long())
-    class_weights = 1. / class_counts.float()
-    sample_weights = class_weights[labels.long()]
-    
-    return WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(labels),
-        replacement=True
-    )
+# Custom Dataset class
+class ActionDataset(Dataset):
+    def __init__(self, rgb_clips, flow_clips, labels, transform=None):
+        self.rgb_clips = rgb_clips
+        self.flow_clips = flow_clips
+        self.labels = labels
+        self.transform = transform
 
-def evaluate_metrics(y_true: torch.Tensor, y_pred: torch.Tensor, y_prob: torch.Tensor) -> Dict[str, float]:
-    """Calculate various classification metrics."""
-    # Ensure correct shapes
-    y_true = y_true.squeeze()
-    y_pred = y_pred.squeeze()
-    y_prob = y_prob.squeeze()
+    def __len__(self):
+        return len(self.rgb_clips)
+
+    def __getitem__(self, idx):
+        rgb_frames = self.rgb_clips[idx]
+        flow_frames = self.flow_clips[idx]
+
+        # Apply transformation
+        if self.transform:
+            rgb_frames = [self.transform(frame) if not isinstance(frame, torch.Tensor) else frame for frame in rgb_frames]
+            flow_frames = [self.transform(frame) if not isinstance(frame, torch.Tensor) else frame for frame in flow_frames]
+
+        # Ensure dimensions are [num_frames, channels, height, width]
+        rgb_frames = torch.stack(rgb_frames, dim=0)
+        flow_frames = torch.stack(flow_frames, dim=0)
+
+        label_dict = {key: torch.tensor(self.labels[key][idx]) for key in self.labels.keys()}
+
+        return rgb_frames, flow_frames, label_dict
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device):
+    model.train()
+    running_loss = 0.0
+    all_preds = {key: [] for key in ['action', 'offence', 'severity', 'bodypart', 'offence_severity']}
+    all_labels = {key: [] for key in all_preds.keys()}
+
+    for rgb_input, flow_input, labels in tqdm(dataloader, desc="Training"):
+        # Check input shapes and move to device
+        rgb_input, flow_input = rgb_input.to(device), flow_input.to(device)
+
+        # Verify dimensions; if missing batch dim, add it
+        if len(rgb_input.shape) == 4:
+            rgb_input = rgb_input.unsqueeze(0)  # Add batch dim if missing
+        if len(flow_input.shape) == 4:
+            flow_input = flow_input.unsqueeze(0)
+
+        labels = {key: val.to(device) for key, val in labels.items()}
+
+        optimizer.zero_grad()
+
+        # Forward pass
+        outputs = model(rgb_input, flow_input)
+
+        # Compute losses for each task
+        loss = 0.0
+        for i, task in enumerate(all_preds.keys()):
+            task_loss = criterion(outputs[i], labels[task])
+            loss += task_loss
+            all_preds[task].extend(outputs[i].argmax(dim=1).cpu().numpy())
+            all_labels[task].extend(labels[task].cpu().numpy())
+
+        loss.backward()
+        optimizer.step()
+
+        running_loss += loss.item()
+
+    avg_loss = running_loss / len(dataloader)
+    accuracy = {task: accuracy_score(all_labels[task], all_preds[task]) for task in all_preds.keys()}
+
+    return avg_loss, accuracy
+
+# Validation function
+def validate(model, dataloader, criterion, device):
+    model.eval()
+    running_loss = 0.0
+    all_preds = {key: [] for key in ['action', 'offence', 'severity', 'bodypart', 'offence_severity']}
+    all_labels = {key: [] for key in all_preds.keys()}
+
+    with torch.no_grad():
+        for rgb_input, flow_input, labels in tqdm(dataloader, desc="Validation"):
+            rgb_input, flow_input = rgb_input.to(device), flow_input.to(device)
+            labels = {key: val.to(device) for key, val in labels.items()}
+
+            # Forward pass
+            outputs = model(rgb_input, flow_input)
+
+            # Compute losses and predictions for each task
+            loss = 0.0
+            for i, task in enumerate(all_preds.keys()):
+                task_loss = criterion(outputs[i], labels[task])
+                loss += task_loss
+                all_preds[task].extend(outputs[i].argmax(dim=1).cpu().numpy())
+                all_labels[task].extend(labels[task].cpu().numpy())
+
+            running_loss += loss.item()
+
+    # Calculate average loss and accuracy
+    avg_loss = running_loss / len(dataloader)
+    accuracy = {task: accuracy_score(all_labels[task], all_preds[task]) for task in all_preds.keys()}
+
+    return avg_loss, accuracy
+
+def main(data_path, num_epochs=10, batch_size=2, learning_rate=1e-4, max_samples_o=10, max_samples_no =10):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load data
+    train_rgb_clips, train_flow_clips, train_labels_action, train_labels_offence, train_labels_severity, train_labels_bodypart, train_labels_offence_severity = \
+        load_filtered_clips_and_labels(data_path, "train", max_samples_o, max_samples_no)
     
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_true.cpu(), y_pred.cpu(), average='binary'
-    )
-    ap = average_precision_score(y_true.cpu(), y_prob.cpu())
-    
-    return {
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'ap': ap
+    valid_rgb_clips, valid_flow_clips, valid_labels_action, valid_labels_offence, valid_labels_severity, valid_labels_bodypart, valid_labels_offence_severity = \
+        load_filtered_clips_and_labels(data_path, "valid", max_samples_o, max_samples_no)
+
+    # Organize labels in a dictionary format
+    train_labels = {
+        "action": train_labels_action,
+        "offence": train_labels_offence,
+        "severity": train_labels_severity,
+        "bodypart": train_labels_bodypart,
+        "offence_severity": train_labels_offence_severity
+    }
+    valid_labels = {
+        "action": valid_labels_action,
+        "offence": valid_labels_offence,
+        "severity": valid_labels_severity,
+        "bodypart": valid_labels_bodypart,
+        "offence_severity": valid_labels_offence_severity
     }
 
-def train_model(
-    train_loader: DataLoader,
-    val_loader: DataLoader,
-    config: Dict[str, Any],
-    device: torch.device,
-    class_weights: torch.Tensor
-) -> Tuple[nn.Module, Dict[str, Any]]:
-    """Train the video classification model with class balance handling."""
-    try:
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        exp_dir = Path("experiments") / timestamp
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        
-        with open(exp_dir / "config.json", "w") as f:
-            json.dump(config, f, indent=4)
-        
-        model = VideoClassifier(
-            num_frames=config["num_frames"],
-            dropout_rate=config["dropout_rate"]
-        ).to(device)
-        
-        # Modified BCE loss without passing weights directly
-        criterion = nn.BCELoss()
-        
-        # Create per-sample weights based on class weights
-        def get_sample_weights(labels, class_weights):
-            return class_weights[labels.long()].to(device)
-        
-        optimizer = optim.Adam(model.parameters(), lr=config["learning_rate"])
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='max', factor=0.5, patience=3, min_lr=1e-6
-        )
-        
-        writer = SummaryWriter(exp_dir / "logs")
-        
-        best_val_f1 = 0
-        early_stopping_counter = 0
-        history = {
-            "train_loss": [], "val_loss": [], 
-            "train_metrics": [], "val_metrics": []
-        }
-        
-        for epoch in range(config["epochs"]):
-            # Training phase
-            model.train()
-            train_loss = 0
-            train_true = []
-            train_pred = []
-            train_prob = []
-            
-            for videos, labels in train_loader:
-                videos = videos.to(device)
-                labels = labels.to(device)
-                
-                optimizer.zero_grad()
-                outputs = model(videos)
-                
-                # Get sample weights for this batch
-                sample_weights = get_sample_weights(labels, class_weights)
-                
-                # Calculate weighted loss manually
-                loss = criterion(outputs.squeeze(), labels.float())
-                weighted_loss = (loss * sample_weights).mean()
-                
-                weighted_loss.backward()
-                optimizer.step()
-                
-                train_loss += weighted_loss.item()
-                predictions = (outputs.squeeze() > 0.5).float()
-                
-                train_true.extend(labels.cpu().numpy())
-                train_pred.extend(predictions.cpu().numpy())
-                train_prob.extend(outputs.detach().squeeze().cpu().numpy())
-            
-            avg_train_loss = train_loss / len(train_loader)
-            train_metrics = evaluate_metrics(
-                torch.tensor(train_true),
-                torch.tensor(train_pred),
-                torch.tensor(train_prob)
-            )
-            
-            # Validation phase
-            model.eval()
-            val_loss = 0
-            val_true = []
-            val_pred = []
-            val_prob = []
-            
-            with torch.no_grad():
-                for videos, labels in val_loader:
-                    videos = videos.to(device)
-                    labels = labels.to(device)
-                    
-                    outputs = model(videos)
-                    
-                    # Get sample weights for this batch
-                    sample_weights = get_sample_weights(labels, class_weights)
-                    
-                    # Calculate weighted loss manually
-                    loss = criterion(outputs.squeeze(), labels.float())
-                    weighted_loss = (loss * sample_weights).mean()
-                    
-                    val_loss += weighted_loss.item()
-                    predictions = (outputs.squeeze() > 0.5).float()
-                    
-                    val_true.extend(labels.cpu().numpy())
-                    val_pred.extend(predictions.cpu().numpy())
-                    val_prob.extend(outputs.squeeze().cpu().numpy())
-            
-            avg_val_loss = val_loss / len(val_loader)
-            val_metrics = evaluate_metrics(
-                torch.tensor(val_true),
-                torch.tensor(val_pred),
-                torch.tensor(val_prob)
-            )
-            
-            # Update learning rate based on F1 score
-            scheduler.step(val_metrics['f1'])
-            
-            # Log metrics
-            writer.add_scalar('Loss/train', avg_train_loss, epoch)
-            writer.add_scalar('Loss/val', avg_val_loss, epoch)
-            for metric in ['precision', 'recall', 'f1', 'ap']:
-                writer.add_scalar(f'Metrics/train_{metric}', train_metrics[metric], epoch)
-                writer.add_scalar(f'Metrics/val_{metric}', val_metrics[metric], epoch)
-            
-            # Update history
-            history["train_loss"].append(float(avg_train_loss))  # Convert to float for JSON serialization
-            history["val_loss"].append(float(avg_val_loss))
-            history["train_metrics"].append({k: float(v) for k, v in train_metrics.items()})
-            history["val_metrics"].append({k: float(v) for k, v in val_metrics.items()})
-            
-            # Save best model based on F1 score
-            if val_metrics['f1'] > best_val_f1:
-                best_val_f1 = val_metrics['f1']
-                torch.save(model.state_dict(), exp_dir / "best_model.pth")
-                early_stopping_counter = 0
-            else:
-                early_stopping_counter += 1
-            
-            if early_stopping_counter >= config["patience"]:
-                print(f"Early stopping triggered at epoch {epoch+1}")
-                break
-            
-            print(
-                f"Epoch {epoch+1}/{config['epochs']} - "
-                f"Train Loss: {avg_train_loss:.4f} - "
-                f"Val Loss: {avg_val_loss:.4f}\n"
-                f"Train Metrics: Precision: {train_metrics['precision']:.4f}, "
-                f"Recall: {train_metrics['recall']:.4f}, "
-                f"F1: {train_metrics['f1']:.4f}, "
-                f"AP: {train_metrics['ap']:.4f}\n"
-                f"Val Metrics: Precision: {val_metrics['precision']:.4f}, "
-                f"Recall: {val_metrics['recall']:.4f}, "
-                f"F1: {val_metrics['f1']:.4f}, "
-                f"AP: {val_metrics['ap']:.4f}"
-            )
-        
-        history_path = exp_dir / "history.json"
-        with open(history_path, "w") as f:
-            json.dump(history, f, indent=4)
-        
-        model.load_state_dict(torch.load(exp_dir / "best_model.pth", weights_only=True))
-        writer.close()
-        return model, history
-        
-    except Exception as e:
-        print(f"An error occurred during training: {str(e)}")
-        writer.close() if 'writer' in locals() else None
-        raise
+    # Define transform
+    transform = transforms.Compose([
+        transforms.Resize((112, 112)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+
+    # Create datasets and loaders
+    train_dataset = ActionDataset(train_rgb_clips, train_flow_clips, train_labels, transform=transform)
+    valid_dataset = ActionDataset(valid_rgb_clips, valid_flow_clips, valid_labels, transform=transform)
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    valid_loader = DataLoader(valid_dataset, batch_size=batch_size, shuffle=False)
+
+    # Initialize model, loss function, and optimizer
+    model = ImprovedTwoStreamNetwork().to(device)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Training and validation loop
+    best_val_loss = float('inf')
+    for epoch in range(num_epochs):
+        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+
+        # Train
+        train_loss, train_accuracy = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        print(f"Train Loss: {train_loss:.4f} | Train Accuracies: {train_accuracy}")
+
+        # Validate
+        val_loss, val_accuracy = validate(model, valid_loader, criterion, device)
+        print(f"Val Loss: {val_loss:.4f} | Val Accuracies: {val_accuracy}")
+
+        # Save the best model
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "best_model.pth")
+            print("Saved best model.")
+
+        torch.save(model.state_dict(), "final_model.pth")
+
+
 
 if __name__ == "__main__":
-    config = {
-        "num_frames": 16,
-        "batch_size": 4,
-        "epochs": 50,
-        "learning_rate": 1e-4,
-        "dropout_rate": 0.5,
-        "patience": 10
-    }
-    
-    try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {device}")
-        
-        # Prepare data
-        root_dir = Path('SoccerNet/mvFouls')
-        train_data, train_labels = prepare_data(root_dir, 'train')
-        val_data, val_labels = prepare_data(root_dir, 'valid')
-        
-        # Calculate class weights
-        train_labels_tensor = torch.tensor(train_labels)
-        class_weights = calculate_class_weights(train_labels_tensor).to(device)
-        print(f"Class weights: {class_weights}")
-        
-        # Create weighted sampler for training data
-        sampler = get_weighted_sampler(train_labels_tensor)
-        
-        # Create datasets
-        train_dataset = VideoDataset(
-            train_data, 
-            train_labels,
-            num_frames=config["num_frames"],
-            augment=True
-        )
-        val_dataset = VideoDataset(
-            val_data,
-            val_labels,
-            num_frames=config["num_frames"],
-            augment=False
-        )
-        
-        # Create data loaders with weighted sampler for training
-        train_loader = DataLoader(
-            train_dataset,
-            batch_size=config["batch_size"],
-            sampler=sampler,  # Use weighted sampler
-            num_workers=0,
-            pin_memory=True
-        )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=config["batch_size"],
-            shuffle=False,
-            num_workers=0,
-            pin_memory=True
-        )
-        
-        # Train model
-        model, history = train_model(train_loader, val_loader, config, device, class_weights)
-        
-    except Exception as e:
-        print(f"An error occurred in main execution: {str(e)}")
-        raise
+    # Update this path with your actual data path
+    DATA_PATH = 'mvfouls'
+    main(data_path=DATA_PATH)
