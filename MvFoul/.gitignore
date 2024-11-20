@@ -8,3 +8,4 @@ logs
 resnet_model.pth
 final_model.pth
 experiments
+wandb
