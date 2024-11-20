@@ -13,7 +13,7 @@ from model import load_model
 app = FastAPI()
 
 # Load the model
-model = load_model("2_stream_best_model.pth")
+model = load_model("best_model_1.pth")
 
 EVENT_DICTIONARY = {
     'action_class': {
@@ -38,115 +38,356 @@ EVENT_DICTIONARY = {
 @app.get("/", response_class=HTMLResponse)
 async def root():
     return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Foul Classification</title>
-        <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-            .container { text-align: center; }
-            .upload-section { margin: 20px 0; padding: 20px; border: 2px dashed #ccc; border-radius: 5px; }
-            .video-preview { margin: 20px 0; max-width: 100%; }
-            #results { margin-top: 20px; text-align: left; }
-            .loading { display: none; margin: 20px 0; }
-            .prediction { margin: 10px 0; padding: 10px; background-color: #f5f5f5; border-radius: 5px; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>Foul Classification</h1>
-            
-            <div class="upload-section">
-                <h2>Choose Videos</h2>
-                <input type="file" id="videoInput" name="files" accept="video/mp4,video/avi,video/mov" multiple>
-                <button onclick="uploadAndPredict()">Upload and Predict</button>
-            </div>
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Multi-Angle Foul Classification</title>
+    <style>
+        :root {
+            --primary-color: #2962ff;
+            --secondary-color: #0039cb;
+            --background-color: #f5f5f7;
+            --card-background: #ffffff;
+        }
 
-            <div id="loading" class="loading">
-                Processing videos... Please wait.
-            </div>
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--background-color);
+            margin: 0;
+            padding: 20px;
+            color: #333;
+        }
 
-            <div id="results"></div>
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: var(--primary-color);
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .upload-section {
+            background: var(--card-background);
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+            text-align: center;
+            transition: transform 0.2s;
+        }
+
+        .upload-section:hover {
+            transform: translateY(-5px);
+        }
+
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .video-preview {
+            background: var(--card-background);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .video-preview video {
+            width: 100%;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+
+        .video-preview h3 {
+            margin: 0;
+            color: #444;
+            font-size: 1.1em;
+        }
+
+        #uploadBtn {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 1.1em;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #uploadBtn:hover {
+            background: var(--secondary-color);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .custom-file-upload {
+            display: inline-block;
+            padding: 12px 24px;
+            cursor: pointer;
+            background: #e0e0e0;
+            border-radius: 25px;
+            margin-bottom: 20px;
+            transition: background-color 0.3s;
+        }
+
+        .custom-file-upload:hover {
+            background: #d0d0d0;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading-spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #results {
+            background: var(--card-background);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .prediction {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+        }
+
+        .prediction h3 {
+            color: var(--primary-color);
+            margin-top: 0;
+        }
+
+        .confidence-bar {
+            background: #e9ecef;
+            height: 8px;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+
+        .confidence-value {
+            background: var(--primary-color);
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Multi-Angle Foul Classification</h1>
+            <p>Upload multiple video angles for comprehensive foul analysis</p>
         </div>
 
-        <script>
-            async function uploadAndPredict() {
-                const fileInput = document.getElementById('videoInput');
-                const loading = document.getElementById('loading');
-                const results = document.getElementById('results');
+        <div class="upload-section">
+            <label class="custom-file-upload">
+                <input type="file" id="fileInput" accept="video/mp4,video/avi,video/mov" multiple>
+                Choose Videos (Max 4)
+            </label>
+            <button id="uploadBtn" onclick="uploadAndPredict()">Analyze Videos</button>
+        </div>
 
-                if (fileInput.files.length === 0) {
-                    alert('Please select at least one video file');
-                    return;
-                }
+        <div id="videoGrid" class="video-grid"></div>
 
-                if (fileInput.files.length > 4) {
-                    alert('Maximum 4 videos allowed');
-                    return;
-                }
+        <div class="loading" id="loading">
+            <div class="loading-spinner"></div>
+            <p>Processing videos... Please wait</p>
+        </div>
 
-                loading.style.display = 'block';
-                results.innerHTML = '';
+        <div id="results"></div>
+    </div>
 
-                const formData = new FormData();
-                for (let i = 0; i < fileInput.files.length; i++) {
-                    formData.append('files', fileInput.files[i]);
-                }
+    <script>
+        // Add file input change handler to preview videos
+        document.getElementById('fileInput').addEventListener('change', function(e) {
+            const videoGrid = document.getElementById('videoGrid');
+            videoGrid.innerHTML = '';
+            
+            Array.from(e.target.files).forEach((file, index) => {
+                const videoPreview = document.createElement('div');
+                videoPreview.className = 'video-preview';
+                
+                const video = document.createElement('video');
+                video.controls = true;
+                video.src = URL.createObjectURL(file);
+                
+                const title = document.createElement('h3');
+                title.textContent = `Video ${index + 1}: ${file.name}`;
+                
+                videoPreview.appendChild(video);
+                videoPreview.appendChild(title);
+                videoGrid.appendChild(videoPreview);
+            });
+        });
 
-                try {
-                    const response = await fetch('/api/predict_multiple', {
-                        method: 'POST',
-                        body: formData
-                    });
+        async function uploadAndPredict() {
+            const fileInput = document.getElementById('fileInput');
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
 
-                    if (!response.ok) {
-                        throw new Error('Upload failed');
-                    }
-
-                    const data = await response.json();
-                    displayResults(data);
-                } catch (error) {
-                    console.error('Error:', error);
-                    results.innerHTML = '<p style="color: red;">Error processing videos. Please try again.</p>';
-                } finally {
-                    loading.style.display = 'none';
-                }
+            if (fileInput.files.length === 0) {
+                alert('Please select at least one video file');
+                return;
             }
 
-            function displayResults(data) {
-                const results = document.getElementById('results');
-                let html = '';
+            if (fileInput.files.length > 4) {
+                alert('Maximum 4 videos allowed');
+                return;
+            }
 
-                html += '<h2>Individual Predictions</h2>';
-                data.individual_predictions.forEach((pred, index) => {
-                    html += `
-                        <div class="prediction">
-                            <h3>Video ${index + 1}: ${pred.video_name}</h3>
-                            <p>Action: ${pred.action.label} (${(pred.action.confidence * 100).toFixed(2)}%)</p>
-                            <p>Offence: ${pred.offence.label} (${(pred.offence.confidence * 100).toFixed(2)}%)</p>
-                            <p>Severity: ${pred.severity.label} (${(pred.severity.confidence * 100).toFixed(2)}%)</p>
-                            <p>Body Part: ${pred.bodypart.label} (${(pred.bodypart.confidence * 100).toFixed(2)}%)</p>
-                            <p>Offence Severity: ${pred.offence_severity.label} (${(pred.offence_severity.confidence * 100).toFixed(2)}%)</p>
-                        </div>
-                    `;
+            loading.style.display = 'block';
+            results.innerHTML = '';
+
+            const formData = new FormData();
+            for (let i = 0; i < fileInput.files.length; i++) {
+                formData.append('files', fileInput.files[i]);
+            }
+
+            try {
+                const response = await fetch('/api/predict_multiple', {
+                    method: 'POST',
+                    body: formData
                 });
 
-                html += `
-                    <h2>Aggregated Prediction</h2>
-                    <div class="prediction">
-                        <p>Action: ${data.aggregated_prediction.action.label} (${(data.aggregated_prediction.action.confidence * 100).toFixed(2)}%)</p>
-                        <p>Offence: ${data.aggregated_prediction.offence.label} (${(data.aggregated_prediction.offence.confidence * 100).toFixed(2)}%)</p>
-                        <p>Severity: ${data.aggregated_prediction.severity.label} (${(data.aggregated_prediction.severity.confidence * 100).toFixed(2)}%)</p>
-                        <p>Body Part: ${data.aggregated_prediction.bodypart.label} (${(data.aggregated_prediction.bodypart.confidence * 100).toFixed(2)}%)</p>
-                        <p>Offence Severity: ${data.aggregated_prediction.offence_severity.label} (${(data.aggregated_prediction.offence_severity.confidence * 100).toFixed(2)}%)</p>
-                    </div>
-                `;
+                if (!response.ok) throw new Error('Upload failed');
 
-                results.innerHTML = html;
+                const data = await response.json();
+                displayResults(data);
+            } catch (error) {
+                console.error('Error:', error);
+                results.innerHTML = '<p style="color: red;">Error processing videos. Please try again.</p>';
+            } finally {
+                loading.style.display = 'none';
             }
-        </script>
-    </body>
-    </html>
+        }
+
+        function displayResults(data) {
+            const results = document.getElementById('results');
+            let html = '<h2>Analysis Results</h2>';
+
+            // Individual predictions
+    html += '<h3>Individual Video Predictions</h3>';
+    data.individual_predictions.forEach((pred, index) => {
+        html += `
+            <div class="prediction">
+                <h3>Video ${index + 1}: ${pred.video_name}</h3>
+                <div class="prediction-item">
+                    <p>Action: ${pred.action.label}</p>
+                    <div class="confidence-bar">
+                        <div class="confidence-value" style="width: ${pred.action.confidence * 100}%"></div>
+                    </div>
+                    <span>${(pred.action.confidence * 100).toFixed(2)}%</span>
+                </div>
+                <div class="prediction-item">
+                    <p>Offence: ${pred.offence.label}</p>
+                    <div class="confidence-bar">
+                        <div class="confidence-value" style="width: ${pred.offence.confidence * 100}%"></div>
+                    </div>
+                    <span>${(pred.offence.confidence * 100).toFixed(2)}%</span>
+                </div>
+                <div class="prediction-item">
+                    <p>Severity: ${pred.severity.label}</p>
+                    <div class="confidence-bar">
+                        <div class="confidence-value" style="width: ${pred.severity.confidence * 100}%"></div>
+                    </div>
+                    <span>${(pred.severity.confidence * 100).toFixed(2)}%</span>
+                </div>
+                <div class="prediction-item">
+                    <p>Body Part: ${pred.bodypart.label}</p>
+                    <div class="confidence-bar">
+                        <div class="confidence-value" style="width: ${pred.bodypart.confidence * 100}%"></div>
+                    </div>
+                    <span>${(pred.bodypart.confidence * 100).toFixed(2)}%</span>
+                </div>
+                <div class="prediction-item">
+                    <p>Offence Severity: ${pred.offence_severity.label}</p>
+                    <div class="confidence-bar">
+                        <div class="confidence-value" style="width: ${pred.offence_severity.confidence * 100}%"></div>
+                    </div>
+                    <span>${(pred.offence_severity.confidence * 100).toFixed(2)}%</span>
+                </div>
+            </div>
+        `;
+    });
+
+    // Aggregated prediction
+    html += `
+        <h3>Final Aggregated Prediction</h3>
+        <div class="prediction">
+            <div class="prediction-item">
+                <p>Action: ${data.aggregated_prediction.action.label}</p>
+                <div class="confidence-bar">
+                    <div class="confidence-value" style="width: ${data.aggregated_prediction.action.confidence * 100}%"></div>
+                </div>
+                <span>${(data.aggregated_prediction.action.confidence * 100).toFixed(2)}%</span>
+            </div>
+            <div class="prediction-item">
+                <p>Offence: ${data.aggregated_prediction.offence.label}</p>
+                <div class="confidence-bar">
+                    <div class="confidence-value" style="width: ${data.aggregated_prediction.offence.confidence * 100}%"></div>
+                </div>
+                <span>${(data.aggregated_prediction.offence.confidence * 100).toFixed(2)}%</span>
+            </div>
+            <div class="prediction-item">
+                <p>Severity: ${data.aggregated_prediction.severity.label}</p>
+                <div class="confidence-bar">
+                    <div class="confidence-value" style="width: ${data.aggregated_prediction.severity.confidence * 100}%"></div>
+                </div>
+                <span>${(data.aggregated_prediction.severity.confidence * 100).toFixed(2)}%</span>
+            </div>
+            <div class="prediction-item">
+                <p>Body Part: ${data.aggregated_prediction.bodypart.label}</p>
+                <div class="confidence-bar">
+                    <div class="confidence-value" style="width: ${data.aggregated_prediction.bodypart.confidence * 100}%"></div>
+                </div>
+                <span>${(data.aggregated_prediction.bodypart.confidence * 100).toFixed(2)}%</span>
+            </div>
+            <div class="prediction-item">
+                <p>Offence Severity: ${data.aggregated_prediction.offence_severity.label}</p>
+                <div class="confidence-bar">
+                    <div class="confidence-value" style="width: ${data.aggregated_prediction.offence_severity.confidence * 100}%"></div>
+                </div>
+                <span>${(data.aggregated_prediction.offence_severity.confidence * 100).toFixed(2)}%</span>
+            </div>
+        </div>
+            `;
+
+            results.innerHTML = html;
+        }
+    </script>
+</body>
+</html>
     """
 
 @app.post("/api/predict_multiple")
