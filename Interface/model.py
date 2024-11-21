@@ -56,7 +56,6 @@ class TwoStreamNetwork(nn.Module):
 
         return action_out, offence_out, severity_out, bodypart_out, offence_severity_out
 
-
 def load_model(model_path: str):
     model = TwoStreamNetwork()
     model.load_state_dict(torch.load(model_path, map_location=torch.device("cpu")), strict=False)

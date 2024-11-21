@@ -3,3 +3,5 @@ mvfouls
 SoccerNet
 2_stream_best_model.pth
 2_stream_final_model.pth
+best_model.pth
+final_model.pth
