@@ -1,3 +1,5 @@
+
+##<--- Omkar --->##
 import os
 import zipfile
 from SoccerNet.Downloader import SoccerNetDownloader as SNdl
@@ -31,3 +33,5 @@ for split in ["train", "valid", "test", "challenge"]:
     if os.path.exists(zip_file):
         os.remove(zip_file)
         print(f"Removed {split}.zip")
+
+##<--- Omkar --->##

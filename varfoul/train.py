@@ -1,3 +1,4 @@
+##<--- Omkar --->##
 import os
 import torch
 import torch.nn as nn
@@ -184,3 +185,5 @@ if __name__ == "__main__":
     # Update this path with your actual data path
     DATA_PATH = 'SoccerNet/mvfouls'
     main(data_path=DATA_PATH)
+
+##<--- Omkar --->##

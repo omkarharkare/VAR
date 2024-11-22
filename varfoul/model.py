@@ -1,3 +1,4 @@
+##<--- Omkar --->##
 import torch
 import torch.nn as nn
 import torchvision.models as models
@@ -65,6 +66,8 @@ class TwoStreamNetwork(nn.Module):
         offence_severity_out = self.fc_offence_severity(combined_features)
 
         return action_out, offence_out, severity_out, bodypart_out, offence_severity_out
+    
+##<--- Omkar --->##
 
 # # Example of model instantiation
 # model = TwoStreamNetwork()
@@ -81,3 +84,5 @@ class TwoStreamNetwork(nn.Module):
 # outputs = model(rgb_input, flow_input)
 # for output in outputs:
 #     print(output.shape)  # Should print the shape of each output tensor
+
+##<--- Omkar --->##
