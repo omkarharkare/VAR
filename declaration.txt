@@ -81,5 +81,16 @@ Omkar Harkare
 Educational Purpose:
 This project is solely for educational and research purposes. It is not intended for commercial use or deployment in real-world scenarios.
 
-Disclaimer:
-This project is a learning exercise and should not be used for any official or commercial purposes related to sports officiating or decision-making.
+Reference:
+The sn-mvfoul project is used purely for reference purposes to understand the problem domain and evaluation metrics. This project does not use or modify any code from sn-mvfoul directly.
+
+This project is not officially affiliated with SoccerNet or any other mentioned projects. It builds upon publicly available datasets and concepts for educational exploration.
+
+For more information on the original projects, please visit:
+- SoccerNet: https://soccer-net.org/
+- sn-mvfoul: https://github.com/SoccerNet/sn-mvfoul
+- SoccerNet-MLV: https://github.com/csjihwanh/soccernet-MLV/tree/main
+
+Copyright (c) [2024] [University of Ottawa]
+
+Disclaimer: This project is a learning exercise and should not be used for any official or commercial purposes related to sports officiating or decision-making.
