@@ -3,7 +3,7 @@ Project Declaration
 Project Name: Educational Multi-View Foul Detection in Soccer
 
 Description:
-This project is an educational endeavor based on the SoccerNet dataset, focusing on Multi-View Foul (MVFoul) detection in soccer matches. It aims to develop and explore deep learning models for automatic foul detection using multiple camera views. This project is for educational and research purposes only.
+This project is an educational initiative utilizing the publicly available SoccerNet dataset to explore Multi-View Foul (MVFoul) detection in soccer matches. The primary objective is to develop and analyze deep learning models for automatic foul detection using data from multiple camera perspectives. This work is intended solely for educational and research purposes, without any commercial application.
 
 Key Components:
 1. SoccerNet Dataset: Utilizing the SoccerNet dataset for training and evaluation.
@@ -27,6 +27,7 @@ This project is not officially affiliated with SoccerNet or any other mentioned 
 For more information on the original projects, please visit:
 - SoccerNet: https://soccer-net.org/
 - sn-mvfoul: https://github.com/SoccerNet/sn-mvfoul
+- SoccerNet-MLV: https://github.com/csjihwanh/soccernet-MLV/tree/main
 
 Copyright (c) [2024] [University of Ottawa]
 

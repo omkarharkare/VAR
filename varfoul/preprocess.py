@@ -9,7 +9,8 @@ from PIL import Image
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Set the desired frame count
-DESIRED_FRAME_COUNT = 16
+DESIRED_FRAME_COUNT = 126
+num_views = 2 # Number of views in the action
 
 # Load the EVENT_DICTIONARY for mapping annotation labels
 EVENT_DICTIONARY = {
@@ -72,7 +73,7 @@ def load_filtered_clips_and_labels(DATA_PATH, split, max_samples_o, max_samples_
             continue
 
         rgb_action_clips, flow_action_clips = [], []
-        for clip_idx in range(2):
+        for clip_idx in range(num_views):
             clip_path = os.path.join(action_folder, f"clip_{clip_idx}.mp4")
             if not os.path.exists(clip_path):
                 continue

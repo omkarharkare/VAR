@@ -3,11 +3,11 @@ import zipfile
 from SoccerNet.Downloader import SoccerNetDownloader as SNdl
 
 # Set up the downloader
-local_directory = "path/to/SoccerNet"
+local_directory = "SoccerNet"
 mySNdl = SNdl(LocalDirectory=local_directory)
 
 # Download the data
-mySNdl.downloadDataTask(task="mvfouls", split=["train", "valid", "test", "challenge"], password="s0cc3rn3t")
+mySNdl.downloadDataTask(task="mvfouls", split=["train", "valid", "test", "challenge"], password="pass")
 
 # Unzip the downloaded files
 task_directory = os.path.join(local_directory, "mvfouls")

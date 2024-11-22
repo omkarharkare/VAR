@@ -13,7 +13,7 @@ from model import load_model
 app = FastAPI()
 
 # Load the model
-model = load_model("best_model.pth")
+model = load_model("best_model_1.pth")
 
 EVENT_DICTIONARY = {
     'action_class': {
@@ -31,7 +31,7 @@ EVENT_DICTIONARY = {
     },
     'offence_severity_class': {
         0: "No offence", 1: "Offence + No card", 
-        2: "Offence + Yellow card", 3: "Offence + Red card"
+        2: "Yellow card", 3: "Red card"
     }
 }
 
@@ -231,7 +231,7 @@ async def root():
     </style>
 </head>
 <body>
-    <div class="main-container">
+   <div class="main-container">
         <div class="sidebar">
             <div class="header">
                 <h1>VAR Analysis</h1>
@@ -244,7 +244,7 @@ async def root():
                 <button id="uploadBtn" onclick="uploadAndPredict()">Analyze Incident</button>
             </div>
         </div>
-
+        
         <div class="content-area">
             <div class="video-container">
                 <div class="video-grid" id="videoGrid"></div>
@@ -424,6 +424,18 @@ async def predict_multiple(files: List[UploadFile] = File(...)):
                             "confidence": float(offence_severity_probs.max().item())
                         }
                     }
+
+                    # Check if offence is 'No' and adjust severity accordingly
+                    if EVENT_DICTIONARY['offence_class'][torch.argmax(offence_probs, dim=1).item()] == 'No':
+                        prediction["severity"] = {
+                            "label": "1.0",
+                            "confidence": 1.0
+                        }
+                    else:
+                        prediction["severity"] = {
+                            "label": EVENT_DICTIONARY['severity_class'][torch.argmax(severity_probs, dim=1).item()],
+                            "confidence": float(severity_probs.max().item())
+                        }
                     predictions_list.append(prediction)
             finally:
                 # Close any open file handles

@@ -182,5 +182,5 @@ def main(data_path, num_epochs=10, batch_size=2, learning_rate=1e-4, max_samples
 
 if __name__ == "__main__":
     # Update this path with your actual data path
-    DATA_PATH = 'mvfouls'
+    DATA_PATH = 'SoccerNet/mvfouls'
     main(data_path=DATA_PATH)
