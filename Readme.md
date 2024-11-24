@@ -266,6 +266,39 @@ Potential enhancements include:
 
 ---
 
+## Individual Contributions 
+
+### Contributor 1: Jainil K. Rana (300362571)
+#### Responsibilities:
+1. **UI Development**:
+   - Designed and implemented the **FastAPI-based web interface** for the VAR system.
+   - Developed endpoints for video upload, preprocessing, and generating predictions from trained models.
+   - Integrated the **MViT**, **ResNet R3D-18**, and **TwoStreamResNet** models into the interface for real-time foul classification.
+   - Ensured smooth interaction between the backend and the trained models.
+
+2. **Model Training - MViT**:
+   - Trained the **Multi-scale Vision Transformer (MViT)** model for multi-task foul classification.
+   - Fine-tuned hyperparameters such as learning rate, batch size, and dropout to optimize performance.
+   - Evaluated MViT's performance on tasks like action classification, offense detection, and severity assessment.
+
+### Contributor 2: Omkar P. Harkare (300359531)
+#### Responsibilities:
+1. **Model Training - ResNet R3D-18**:
+   - Trained the **ResNet R3D-18** model for multi-task classification using spatiotemporal video data.
+   - Implemented data preprocessing pipelines, including frame resizing and normalization.
+   - Evaluated ResNet's performance across tasks like body part detection and offense severity classification.
+
+2. **Model Training - TwoStreamResNet**:
+   - Trained the **TwoStreamResNet** model by combining RGB and optical flow streams.
+   - Handled feature extraction from both streams using ResNet-50 backbones.
+   - Tuned task-specific fully connected layers for action recognition, severity assessment, and offense detection.
+
+3. **Dataset Preparation**:
+   - Processed the SoccerNet-MVFoul dataset, ensuring balanced class distributions for training.
+   - Computed optical flow using Farneback's method and prepared data for multi-task learning.
+
+---
+
 ## Citations:
 
 - [1] [SoccerNet](https://soccer-net.org)  
