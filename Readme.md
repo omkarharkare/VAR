@@ -175,7 +175,7 @@ This section focuses on the implementation of the interactive interface for the 
 ### Interface Overview
 The interface is built using FastAPI, providing a simple web-based platform for interacting with the trained VARify model. Users can upload video files, and the system processes them using the trained model to return predictions.
 
-Download the weights of the model: https://drive.google.com/file/d/1u7UvG5CDSTjPSi7bH_Vq5dKkfLb4SzRW/view?usp=drive_link or paste the trained model in the `Interface` folder.
+Download the weights of the model: https://drive.google.com/drive/u/0/folders/1aLEd2oMR30rEDBYSFFUs2s15OG047j61 or paste the trained model in the `Interface` folder.
 
 And save the best_model.pth file in the folder `Interface`.
 
